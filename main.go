@@ -25,7 +25,6 @@ type TcpAddr struct {
 	Ip   IP
 	Port int
 }
-type NextHop net.TCPAddr
 
 var connCh chan net.Conn
 
@@ -89,8 +88,8 @@ func ConnectToNextHop(relayInfo RelayInfo) {
 	go func() {
 		for {
 			_, err := io.Copy(rightConn, leftConn) // leftConn -> rightConn
-			fmt.Printf("io.Copy failed in 2, error = %v\n, exit!", err)
 			if err != nil {
+				fmt.Printf("io.Copy failed in 2, error = %v, exit!\n", err)
 				wg.Done()
 				return
 			}
@@ -99,35 +98,18 @@ func ConnectToNextHop(relayInfo RelayInfo) {
 	wg.Wait()
 }
 
-func ListenToLeft() {
-	listen, err := net.Listen("tcp", "192.168.19.136:8081")
-	if err != nil {
-		fmt.Println("Listen at 192.168.19.136:8081 failed, error = ", err)
-		return
-	}
-
-	for {
-		connLeft, err := listen.Accept() // 监听客户端的连接请求
-		if err != nil {
-			fmt.Println("Accept() failed, error = ", err)
-			continue
-		}
-		fmt.Println("Accept a connect from left, with client address = ", connLeft.RemoteAddr().String())
-		connCh <- connLeft
-	}
-}
-
 // TCP Server端测试
 // 处理函数
-func process(conn net.Conn) {
-	defer conn.Close() // 关闭连接
-	reader := bufio.NewReader(conn)
+func ProcessMsgFromController(connController net.Conn) {
+	defer connController.Close() // 关闭连接
+	reader := bufio.NewReader(connController)
 	var buf [128]byte
 	n, err := reader.Read(buf[:]) // 读取数据
 	if err != nil {
-		fmt.Println("read from client failed, err: ", err)
+		fmt.Println("read from controller failed, error = ", err)
 		return
 	}
+	// 这里可能有问题，关键是Sizeof函数的作用可能不是我理解的那样
 	if n < int(unsafe.Sizeof(RelayInfo{})) {
 		fmt.Printf("read %d byte from controller, less than sizeof(RelayInfo)\n", n)
 		return
@@ -144,21 +126,44 @@ func process(conn net.Conn) {
 func ListenToController() {
 	listen, err := net.Listen("tcp", "192.168.19.136:8080")
 	if err != nil {
-		fmt.Println("Listen() failed, err: ", err)
+		fmt.Println("ListenToController: Listen() failed, error = ", err)
 		return
+	} else {
+		fmt.Println("ListenToController: Listen to controller success!")
 	}
 
 	for {
 		conn, err := listen.Accept() // 监听客户端的连接请求
 		if err != nil {
-			fmt.Println("Accept() failed, err: ", err)
+			fmt.Println("ListenToController: Accept() failed, error = ", err)
 			continue
 		}
-		go process(conn) // 启动一个goroutine来处理客户端的连接请求
+		go ProcessMsgFromController(conn) // 启动一个goroutine来处理客户端的连接请求
+	}
+}
+
+func ListenToLeft(address string) {
+	listen, err := net.Listen("tcp", address)
+	if err != nil {
+		fmt.Printf("Listen at %s failed, error = %v\n", address, err)
+		return
+	} else {
+		fmt.Printf("Listen at %s, wait pre hop to connect us.\n", address)
+	}
+
+	for {
+		connLeft, err := listen.Accept() // 监听客户端的连接请求
+		if err != nil {
+			fmt.Println("ListenToLeft: Accept() failed, error = ", err)
+			continue
+		}
+		fmt.Println("ListenToLeft: Accept from pre hop, with client address = ", connLeft.RemoteAddr().String())
+		connCh <- connLeft
 	}
 }
 
 func main() {
 	go ListenToController()
-	ListenToLeft()
+	address := "xx.xx.xx.xx:8080"
+	ListenToLeft(address)
 }
