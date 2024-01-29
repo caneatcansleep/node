@@ -13,15 +13,15 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unsafe"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-var ListenToLeftAddr = "localhost:8082"
-var ListenToControllerAddr = "localhost:8081"
-var controllerAddr = "localhost:8080"
+var ListenToLeftAddr = "192.168.19.137:8082"
+var ListenToControllerAddr = "192.168.19.137:8081"
+var controllerAddr = "192.168.19.136:8080"
+var localAddr = "192.168.19.137"
 var connCh chan net.Conn
 
 const digits = "0123456789abcdef"
@@ -81,7 +81,7 @@ func ConnectToNextHop(relayInfo RelayInfo) {
 	var rightConn net.Conn
 	var err error
 
-	nextHop := relayInfo.NextHop.string4() + strconv.Itoa(relayInfo.NextHopPort)
+	nextHop := relayInfo.NextHop.string4() + ":" + strconv.Itoa(relayInfo.NextHopPort)
 	fmt.Println("nextHop = ", nextHop)
 
 	// 有可能下一跳还没有监听，因此我们需要不断尝试建立tcp连接，直到建立成功
@@ -151,8 +151,8 @@ func ProcessMsgFromController(connController net.Conn) {
 	relayInfo := RelayInfo{}
 	relayInfo.PreHop = buf[:4]
 	relayInfo.NextHop = buf[4:8]
-	relayInfo.ListenPort = int(binary.LittleEndian.Uint32(buf[8:10]))
-	relayInfo.NextHopPort = int(binary.LittleEndian.Uint32(buf[10:12]))
+	relayInfo.ListenPort = int(binary.LittleEndian.Uint16(buf[8:10]))
+	relayInfo.NextHopPort = int(binary.LittleEndian.Uint16(buf[10:12]))
 	fmt.Println("relayInfo = ", relayInfo)
 	ConnectToNextHop(relayInfo)
 }
@@ -171,6 +171,8 @@ func ListenToController() {
 		if err != nil {
 			fmt.Println("ListenToController: Accept() failed, error = ", err)
 			continue
+		} else {
+			fmt.Println("ListenToController: Accept() success, with remoteAddr = ", conn.RemoteAddr().String())
 		}
 		go ProcessMsgFromController(conn) // 启动一个goroutine来处理客户端的连接请求
 	}
@@ -208,12 +210,13 @@ func registerNode() {
 
 	c := services.NewControllerClient(conn)
 	defer cancel()
-	resp, err := c.RegisterNode(ctx, &services.RegisterNodeRequest{Ip: ipStringToInt("localhost")})
+	resp, err := c.RegisterNode(ctx, &services.RegisterNodeRequest{Ip: ipStringToInt(localAddr)})
 	if err != nil {
 		log.Printf("failed to call RegisterNode, error = %v\n", err)
 		return
 	}
 	fmt.Printf("register node, get node id = %d\n", resp.NodeId)
+	c.UpdateNodeMetric(ctx, &services.UpdateNodeMetricRequest{Name: "cpu", Value: 20, Weight: 1, NodeId: resp.NodeId})
 }
 
 func ipStringToInt(ip string) int32 {
@@ -237,10 +240,7 @@ func ipStringToInt(ip string) int32 {
 
 }
 func main() {
-	fmt.Printf("%x\n", ipStringToInt("localhost"))
-	fmt.Println(int(unsafe.Sizeof(RelayInfo{})))
 	registerNode()
 	go ListenToController()
 	ListenToLeft(ListenToLeftAddr)
-
 }
