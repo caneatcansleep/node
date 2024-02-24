@@ -21,6 +21,7 @@ var ListenToLeftAddr = "192.168.19.136:8082"
 var ListenToControllerAddr = "192.168.19.136:8081"
 var controllerAddr = "192.168.19.136:8080"
 var localAddr = "192.168.19.136"
+
 var connCh chan net.Conn
 
 // TODO: adjNodes代表的是与该节点相邻的所有中继节点
