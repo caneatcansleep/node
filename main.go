@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"node/services"
@@ -13,20 +12,19 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unsafe"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-var ListenToLeftAddr = "localhost:8082"
-var ListenToControllerAddr = "localhost:8081"
-var controllerAddr = "localhost:8080"
+var ListenToLeftAddr = "192.168.19.136:8082"
+var ListenToControllerAddr = "192.168.19.136:8081"
+var controllerAddr = "192.168.19.136:8080"
+var localAddr = "192.168.19.136"
 var connCh chan net.Conn
 
-const digits = "0123456789abcdef"
-
-type IP []byte
+// TODO: adjNodes代表的是与该节点相邻的所有中继节点
+var adjNodes []int
 
 type RelayInfo struct {
 	PreHop      IP
@@ -42,38 +40,31 @@ type TcpAddr struct {
 
 func init() {
 	connCh = make(chan net.Conn)
+	adjNodes = make([]int, 0)
 }
 
-func (ip IP) string4() string {
-	const max = len("255.255.255.255")
-	ret := make([]byte, 0, max)
-	ret = ip.appendTo4(ret)
-	return string(ret)
-}
+func releasePort() {
+	var req services.ReleasePortRequest
+	req.Id = 2
+	req.Port = 10
 
-func (ip IP) appendTo4(ret []byte) []byte {
-	ret = appendDecimal(ret, ip[0])
-	ret = append(ret, '.')
-	ret = appendDecimal(ret, ip[1])
-	ret = append(ret, '.')
-	ret = appendDecimal(ret, ip[2])
-	ret = append(ret, '.')
-	ret = appendDecimal(ret, ip[3])
-	return ret
-}
-
-// appendDecimal appends the decimal string representation of x to b.
-func appendDecimal(b []byte, x uint8) []byte {
-	// Using this function rather than strconv.AppendUint makes IPv4
-	// string building 2x faster.
-
-	if x >= 100 {
-		b = append(b, digits[x/100])
+	//连接server端
+	timeout := 5 * time.Minute
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	conn, err := grpc.DialContext(ctx, controllerAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		log.Fatalf("grpc.Dial err")
 	}
-	if x >= 10 {
-		b = append(b, digits[x/10%10])
+	defer conn.Close()
+
+	c := services.NewControllerClient(conn)
+	defer cancel()
+	resp, err := c.ReleasePort(ctx, &req)
+	if err != nil {
+		log.Printf("failed to call ReleasePort, error = %v\n", err)
+		return
 	}
-	return append(b, digits[x%10])
+	fmt.Printf("ReleasePort, get  response status = %d\n", resp.Status)
 }
 
 func ConnectToNextHop(relayInfo RelayInfo) {
@@ -81,7 +72,7 @@ func ConnectToNextHop(relayInfo RelayInfo) {
 	var rightConn net.Conn
 	var err error
 
-	nextHop := relayInfo.NextHop.string4() + strconv.Itoa(relayInfo.NextHopPort)
+	nextHop := relayInfo.NextHop.string4() + ":" + strconv.Itoa(relayInfo.NextHopPort)
 	fmt.Println("nextHop = ", nextHop)
 
 	// 有可能下一跳还没有监听，因此我们需要不断尝试建立tcp连接，直到建立成功
@@ -105,28 +96,50 @@ func ConnectToNextHop(relayInfo RelayInfo) {
 
 	defer rightConn.Close()
 	defer leftConn.Close()
+	defer releasePort()
 
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
 		for {
-			_, err := io.Copy(leftConn, rightConn) // rightConn -> leftConn
+
+			reader := bufio.NewReader(rightConn)
+			var buf [128]byte
+			n, err := reader.Read(buf[:]) // 读取数据
 			if err != nil {
-				fmt.Printf("io.Copy failed in 1, error = %v, exit!\n", err)
-				wg.Done()
+				fmt.Println("read from controller failed, error = ", err)
 				return
+			} else {
+				fmt.Printf("read %d bytes from rightConn\n", n)
 			}
+			leftConn.Write(buf[:])
+			// _, err := io.Copy(leftConn, rightConn) // rightConn -> leftConn
+			// if err != nil {
+			// 	fmt.Printf("io.Copy failed in 1, error = %v, exit!\n", err)
+			// 	wg.Done()
+			// 	return
+			// }
 		}
 	}()
 
 	go func() {
 		for {
-			_, err := io.Copy(rightConn, leftConn) // leftConn -> rightConn
+			reader := bufio.NewReader(leftConn)
+			var buf [128]byte
+			n, err := reader.Read(buf[:]) // 读取数s据
 			if err != nil {
-				fmt.Printf("io.Copy failed in 2, error = %v, exit!\n", err)
-				wg.Done()
+				fmt.Println("read from controller failed, error = ", err)
 				return
+			} else {
+				fmt.Printf("read %d bytes from leftConn\n", n)
 			}
+			rightConn.Write(buf[:])
+			// _, err := io.Copy(rightConn, leftConn) // leftConn -> rightConn
+			// if err != nil {
+			// 	fmt.Printf("io.Copy failed in 2, error = %v, exit!\n", err)
+			// 	wg.Done()
+			// 	return
+			// }
 		}
 	}()
 	wg.Wait()
@@ -151,9 +164,13 @@ func ProcessMsgFromController(connController net.Conn) {
 	relayInfo := RelayInfo{}
 	relayInfo.PreHop = buf[:4]
 	relayInfo.NextHop = buf[4:8]
-	relayInfo.ListenPort = int(binary.LittleEndian.Uint32(buf[8:10]))
-	relayInfo.NextHopPort = int(binary.LittleEndian.Uint32(buf[10:12]))
+	relayInfo.ListenPort = int(binary.LittleEndian.Uint16(buf[8:10]))
+	relayInfo.NextHopPort = int(binary.LittleEndian.Uint16(buf[10:12]))
 	fmt.Println("relayInfo = ", relayInfo)
+	// 感觉这个模型有点问题。
+	// 不应该是每个中继连接都创建一个监听套接字。而应该是每个服务创建一个监听套接字。
+	// 当该服务存在后续的监听套接字后就不应该再重新创建了
+	go ListenToLeft(localAddr + ":" + strconv.Itoa(relayInfo.ListenPort))
 	ConnectToNextHop(relayInfo)
 }
 
@@ -166,14 +183,19 @@ func ListenToController() {
 		log.Println("ListenToController: Listen to controller success!")
 	}
 
+	defer listen.Close()
+
 	for {
 		conn, err := listen.Accept() // 监听客户端的连接请求
 		if err != nil {
 			fmt.Println("ListenToController: Accept() failed, error = ", err)
 			continue
+		} else {
+			fmt.Println("ListenToController: Accept() success, with remoteAddr = ", conn.RemoteAddr().String())
 		}
 		go ProcessMsgFromController(conn) // 启动一个goroutine来处理客户端的连接请求
 	}
+
 }
 
 func ListenToLeft(address string) {
@@ -208,12 +230,13 @@ func registerNode() {
 
 	c := services.NewControllerClient(conn)
 	defer cancel()
-	resp, err := c.RegisterNode(ctx, &services.RegisterNodeRequest{Ip: ipStringToInt("localhost")})
+	resp, err := c.RegisterNode(ctx, &services.RegisterNodeRequest{Ip: ipStringToInt(localAddr)})
 	if err != nil {
 		log.Printf("failed to call RegisterNode, error = %v\n", err)
 		return
 	}
 	fmt.Printf("register node, get node id = %d\n", resp.NodeId)
+	c.UpdateNodeMetric(ctx, &services.UpdateNodeMetricRequest{Name: "cpu", Value: 20, Weight: 1, NodeId: resp.NodeId})
 }
 
 func ipStringToInt(ip string) int32 {
@@ -236,11 +259,36 @@ func ipStringToInt(ip string) int32 {
 	return int32(binary.LittleEndian.Uint32(tmp))
 
 }
-func main() {
-	fmt.Printf("%x\n", ipStringToInt("localhost"))
-	fmt.Println(int(unsafe.Sizeof(RelayInfo{})))
-	registerNode()
-	go ListenToController()
-	ListenToLeft(ListenToLeftAddr)
 
+// TODO:
+func reservePorts() {
+	var req services.ReservePortsRequest
+	req.Id = 2
+	req.PortLeft = 20000
+	req.PortRight = 20010
+
+	//连接server端
+	timeout := 5 * time.Minute
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	conn, err := grpc.DialContext(ctx, controllerAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		log.Fatalf("grpc.Dial err")
+	}
+	defer conn.Close()
+
+	c := services.NewControllerClient(conn)
+	defer cancel()
+	resp, err := c.ReservePorts(ctx, &req)
+	if err != nil {
+		log.Printf("failed to call ReservePorts, error = %v\n", err)
+		return
+	}
+	fmt.Printf("ReservePorts, get  response status = %d\n", resp.Status)
+}
+
+func main() {
+	registerNode()
+	reservePorts()
+	GetMetrics()
+	go ListenToController()
 }

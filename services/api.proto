@@ -25,6 +25,26 @@ service Controller {
   rpc UpdateLinkMetric (UpdateLinkMetricRequest) returns (UpdateLinkMetricReply) {}
   rpc SelectRelayPath(SelectRelayPathRequest) returns (SelectRelayPathReply) {}
   rpc RegisterNode(RegisterNodeRequest) returns (RegisterNodeReply) {}
+  rpc ReservePorts(ReservePortsRequest) returns (ReservePortsReply) {}
+  rpc ReleasePort(ReleasePortRequest) returns (ReleasePortReply) {}
+}
+
+message ReleasePortRequest {
+  int32 id=1;
+  int32 port=2;
+}
+
+message ReleasePortReply {
+  int32 status=1;
+}
+message ReservePortsRequest {
+  int32 id =1;
+  int32 portLeft =2;
+  int32 portRight =3;
+}
+
+message ReservePortsReply {
+  int32 status=1;
 }
 
 message RegisterNodeRequest {

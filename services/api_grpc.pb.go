@@ -27,6 +27,8 @@ type ControllerClient interface {
 	UpdateLinkMetric(ctx context.Context, in *UpdateLinkMetricRequest, opts ...grpc.CallOption) (*UpdateLinkMetricReply, error)
 	SelectRelayPath(ctx context.Context, in *SelectRelayPathRequest, opts ...grpc.CallOption) (*SelectRelayPathReply, error)
 	RegisterNode(ctx context.Context, in *RegisterNodeRequest, opts ...grpc.CallOption) (*RegisterNodeReply, error)
+	ReservePorts(ctx context.Context, in *ReservePortsRequest, opts ...grpc.CallOption) (*ReservePortsReply, error)
+	ReleasePort(ctx context.Context, in *ReleasePortRequest, opts ...grpc.CallOption) (*ReleasePortReply, error)
 }
 
 type controllerClient struct {
@@ -73,6 +75,24 @@ func (c *controllerClient) RegisterNode(ctx context.Context, in *RegisterNodeReq
 	return out, nil
 }
 
+func (c *controllerClient) ReservePorts(ctx context.Context, in *ReservePortsRequest, opts ...grpc.CallOption) (*ReservePortsReply, error) {
+	out := new(ReservePortsReply)
+	err := c.cc.Invoke(ctx, "/server.Controller/ReservePorts", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *controllerClient) ReleasePort(ctx context.Context, in *ReleasePortRequest, opts ...grpc.CallOption) (*ReleasePortReply, error) {
+	out := new(ReleasePortReply)
+	err := c.cc.Invoke(ctx, "/server.Controller/ReleasePort", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ControllerServer is the server API for Controller service.
 // All implementations must embed UnimplementedControllerServer
 // for forward compatibility
@@ -82,6 +102,8 @@ type ControllerServer interface {
 	UpdateLinkMetric(context.Context, *UpdateLinkMetricRequest) (*UpdateLinkMetricReply, error)
 	SelectRelayPath(context.Context, *SelectRelayPathRequest) (*SelectRelayPathReply, error)
 	RegisterNode(context.Context, *RegisterNodeRequest) (*RegisterNodeReply, error)
+	ReservePorts(context.Context, *ReservePortsRequest) (*ReservePortsReply, error)
+	ReleasePort(context.Context, *ReleasePortRequest) (*ReleasePortReply, error)
 	mustEmbedUnimplementedControllerServer()
 }
 
@@ -100,6 +122,12 @@ func (UnimplementedControllerServer) SelectRelayPath(context.Context, *SelectRel
 }
 func (UnimplementedControllerServer) RegisterNode(context.Context, *RegisterNodeRequest) (*RegisterNodeReply, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method RegisterNode not implemented")
+}
+func (UnimplementedControllerServer) ReservePorts(context.Context, *ReservePortsRequest) (*ReservePortsReply, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ReservePorts not implemented")
+}
+func (UnimplementedControllerServer) ReleasePort(context.Context, *ReleasePortRequest) (*ReleasePortReply, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ReleasePort not implemented")
 }
 func (UnimplementedControllerServer) mustEmbedUnimplementedControllerServer() {}
 
@@ -186,6 +214,42 @@ func _Controller_RegisterNode_Handler(srv interface{}, ctx context.Context, dec 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Controller_ReservePorts_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReservePortsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ControllerServer).ReservePorts(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/server.Controller/ReservePorts",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ControllerServer).ReservePorts(ctx, req.(*ReservePortsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Controller_ReleasePort_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReleasePortRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ControllerServer).ReleasePort(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/server.Controller/ReleasePort",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ControllerServer).ReleasePort(ctx, req.(*ReleasePortRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Controller_ServiceDesc is the grpc.ServiceDesc for Controller service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -208,6 +272,14 @@ var Controller_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RegisterNode",
 			Handler:    _Controller_RegisterNode_Handler,
+		},
+		{
+			MethodName: "ReservePorts",
+			Handler:    _Controller_ReservePorts_Handler,
+		},
+		{
+			MethodName: "ReleasePort",
+			Handler:    _Controller_ReleasePort_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
